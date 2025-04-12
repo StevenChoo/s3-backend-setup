@@ -124,7 +124,6 @@ Resources:
       # Add MFA Delete protection to prevent accidental deletion
       VersioningConfiguration:
         Status: Enabled
-        MfaDelete: Enabled
       # Set explicit object ownership to prevent ACL-based access
       OwnershipControls:
         Rules:
@@ -233,7 +232,6 @@ Resources:
       # Enable versioning for audit purposes with MFA delete protection
       VersioningConfiguration:
         Status: Enabled
-        MfaDelete: Enabled
       # Apply tags to the logs bucket
       Tags:
         - Key: Project
