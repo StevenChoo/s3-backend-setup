@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Base infrastructure for the OpenTofu remote backend
+
+# CloudFormation Parameters to support tagging and naming requirements
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name of the project using this backend
+    Default: "OpenTofuDemo"
+
+  EnvironmentName:
+    Type: String
+    Description: Environment name (e.g., dev, prod)
+    Default: ""
+
+  DefaultTags:
+    Type: String
+    Description: JSON string of default tags
+    Default: '{"UsedBy": "OpenTofu", "UsedFor": "OpenTofu_s3_backend"}'
+
+Conditions:
+  # Only add Environment tag if an environment was specified
+  HasEnvironment: !Not [!Equals [!Ref EnvironmentName, ""]]
+
+Resources:
+  # KMS Key for encryption
+  rKMSOpenTofuBackendKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Key rotation is intentionally disabled due to a very low exhaustion risk, https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html#rotating-kms-keys"
+    Type: AWS::KMS::Key
+    Properties:
+      # Description of the KMS key's purpose
+      Description: AWS KMS Key to encrypt the OpenTofu backend Amazon S3 bucket
+      # Enable the KMS key
+      Enabled: True
+      # Disable automatic key rotation for this key
+      EnableKeyRotation: False
+      # Define the key access policy
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-s3-bucket-opentofu-backend
+        Statement:
+          # Allow full KMS access to the AWS account root user
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: 'kms:*'
+            Resource: '*'
+          # Prevent key deletion for security
+          - Sid: DeleteProtection
+            Principal: "*"
+            Effect: Deny
+            Action:
+              - kms:ScheduleKeyDeletion
+            Resource: "*"
+      # Apply tags to the KMS key
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: UsedBy
+          Value: OpenTofy
+        - Key: UsedFor
+          Value: OpenTofu_s3_backend
+        - !If
+          - HasEnvironment
+          - { Key: Environment, Value: !Ref EnvironmentName }
+          - !Ref AWS::NoValue
+
+    # Retain the KMS key even if the stack is deleted
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # S3 bucket for storing OpenTofu state files
+  rOpenTofuRemoteBackendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Name the bucket with stack name and account ID for uniqueness
+      BucketName: !Sub "${AWS::StackName}-${AWS::AccountId}"
+      # Configure server-side encryption using the KMS key we created
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt rKMSOpenTofuBackendKey.KeyId
+            BucketKeyEnabled: true
+      # Block all public access for security
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Configure lifecycle rules to optimize storage costs
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionsForStateFile
+            Status: Enabled
+            # Move objects to INTELLIGENT_TIERING after 1 day to optimize costs
+            Transitions:
+              - TransitionInDays: 1
+                StorageClass: INTELLIGENT_TIERING
+            # Move old versions to GLACIER after 1 day
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 1
+                StorageClass: GLACIER
+      # Enable versioning to keep history of all state files
+      VersioningConfiguration:
+        Status: Enabled
+      # Enable access logging for audit purposes
+      LoggingConfiguration:
+        DestinationBucketName: !Ref rAccessLogsBucket
+        LogFilePrefix: 'open-tofu/'
+      # Apply tags to the bucket
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: UsedBy
+          Value: OpenTofy
+        - Key: UsedFor
+          Value: OpenTofu_s3_backend
+        - !If
+          - HasEnvironment
+          - { Key: Environment, Value: !Ref EnvironmentName }
+          - !Ref AWS::NoValue
+    # Retain the bucket even if the stack is deleted
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # Bucket policy to enforce security on the main state bucket
+  rOpenTofuRemoteBackendBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref rOpenTofuRemoteBackendBucket
+      PolicyDocument:
+        Statement:
+          # Prevent deletion of state files (protect against accidental delete)
+          - Sid: DenyDeletingOpenTofuStateFiles
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:DeleteObject"
+            Resource: !Sub "arn:aws:s3:::${rOpenTofuRemoteBackendBucket}/*"
+          # Enforce HTTPS connections only
+          - Sid: RestrictToTLSRequestsOnly
+            Principal: "*"
+            Action: "s3:*"
+            Effect: Deny
+            Resource:
+              - !Sub "arn:aws:s3:::${rOpenTofuRemoteBackendBucket}"
+              - !Sub "arn:aws:s3:::${rOpenTofuRemoteBackendBucket}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # S3 bucket for storing access logs from the main bucket
+  rAccessLogsBucket:
+    # checkov:skip=CKV_AWS_18:Ensure the Amazon S3 bucket has access logging enabled
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "This is the bucket to store the access logs"
+    Properties:
+      # Name the access logs bucket
+      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-access-logs
+      # Configure server-side encryption (using AES256 instead of KMS for cost efficiency)
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      # Block all public access for security
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Configure lifecycle rules to manage logs retention and costs
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            # Move logs to GLACIER after 1 day to save costs
+            Transitions:
+              - TransitionInDays: 1
+                StorageClass: GLACIER
+            # Move old versions to GLACIER after 1 day
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 1
+                StorageClass: GLACIER
+      # Enable versioning for audit purposes
+      VersioningConfiguration:
+        Status: Enabled
+      # Apply tags to the logs bucket
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: UsedBy
+          Value: OpenTofy
+        - Key: UsedFor
+          Value: OpenTofu_s3_backend
+        - !If
+          - HasEnvironment
+          - { Key: Environment, Value: !Ref EnvironmentName }
+          - !Ref AWS::NoValue
+    # Retain the bucket even if the stack is deleted
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # Policy for the access logs bucket
+  rAccessLogsBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref rAccessLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Allow S3 service to write logs to this bucket
+          - Sid: 'S3ServerAccessLogsPolicy'
+            Effect: 'Allow'
+            Principal:
+              Service: 'logging.s3.amazonaws.com'
+            Action:
+              - 's3:PutObject'
+            Resource: !Sub 'arn:aws:s3:::${rAccessLogsBucket}/open-tofu/*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+          # Enforce HTTPS connections only
+          - Sid: RestrictToTLSRequestsOnly
+            Action: "s3:*"
+            Effect: Deny
+            Resource:
+              - !Sub "arn:aws:s3:::${rAccessLogsBucket}"
+              - !Sub "arn:aws:s3:::${rAccessLogsBucket}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+            Principal: "*"
+
+  # DynamoDB table for state locking
+  rOpenTofuRemoteBackendDDB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      # Set the table name
+      TableName: !If [HasEnvironment, !Sub "opentofu-lock-${ProjectName}-${EnvironmentName}", !Sub "opentofu-lock-${ProjectName}"]
+      # Use on-demand pricing for cost efficiency with infrequent usage
+      BillingMode: PAY_PER_REQUEST
+      # Define the schema (as required by Terraform/OpenTofu for state locking)
+      AttributeDefinitions:
+        - AttributeName: LockID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: LockID
+          KeyType: HASH
+      # Enable encryption using the KMS key
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt rKMSOpenTofuBackendKey.Arn
+      # Enable point-in-time recovery for backup purposes
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      # Apply tags to the DynamoDB table
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: UsedBy
+          Value: OpenTofy
+        - Key: UsedFor
+          Value: OpenTofu_s3_backend
+        - !If
+          - HasEnvironment
+          - { Key: Environment, Value: !Ref EnvironmentName }
+          - !Ref AWS::NoValue
+
+# Outputs to be used by the bootstrap script and OpenTofu
+Outputs:
+  OpenTofuBackendBucketName:
+    Description: S3 bucket name for OpenTofu state storage
+    Value: !Ref rOpenTofuRemoteBackendBucket
+    Export:
+      Name: 'OpenTofuBackendBucketName'
+
+  OpenTofuBackendDynamoDBName:
+    Description: DynamoDB table name for OpenTofu state locking
+    Value: !Ref rOpenTofuRemoteBackendDDB
+    Export:
+      Name: 'OpenTofuBackendDynamoDBName'
+
+  KMSKeyID:
+    Description: ID of the KMS key used for encryption
+    Value: !Ref rKMSOpenTofuBackendKey
+    Export:
+      Name: 'OpenTofuKMSKeyID'
