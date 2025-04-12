@@ -107,7 +107,7 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       # Name the bucket with stack name and account ID for uniqueness
-      BucketName: !Sub "${AWS::StackName}-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}"
       # Configure server-side encryption using the KMS key we created
       BucketEncryption:
         ServerSideEncryptionConfiguration:

@@ -40,6 +40,22 @@ fi
 # Ask for environment name (optional)
 read -p "Enter environment name (dev/prod/etc., optional): " ENV_NAME
 
+# Validate the combined length of project name and environment name
+COMBINED_LENGTH=$((${#PROJECT_NAME} + ${#ENV_NAME}))
+# Account for the hyphen that will be added if environment is specified
+if [ -n "$ENV_NAME" ]; then
+  COMBINED_LENGTH=$((COMBINED_LENGTH + 1))
+fi
+
+# Check if the combined length is too long (limit of 30 characters)
+if [ $COMBINED_LENGTH -gt 30 ]; then
+  echo "Error: The combined length of project name and environment name exceeds 30 characters"
+  echo "Current combined length: $COMBINED_LENGTH characters"
+  echo "This limit exists due to S3 bucket naming restrictions and the default naming used by the script"
+  echo "Please use shorter names (total combined length must be 30 characters or less)"
+  exit 1
+fi
+
 # Ask for AWS region (optional)
 read -p "Enter AWS region (default: $DEFAULT_REGION): " REGION
 REGION=${REGION:-$DEFAULT_REGION}
