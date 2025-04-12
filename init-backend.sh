@@ -100,10 +100,12 @@ echo "--- Get S3 bucket & DynamoDB table name for OpenTofu backend ---"
 bucket=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendBucketName'].OutputValue" --output text)
 dbtable=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendDynamoDBName'].OutputValue" --output text)
 kms_key=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='KMSKeyID'].OutputValue" --output text)
+kms_alias=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='KMSKeyAlias'].OutputValue" --output text)
 
 echo "S3 Bucket: $bucket"
 echo "DynamoDB table: $dbtable"
 echo "KMS Key ID: $kms_key"
+echo "KMS Key Alias: $kms_alias"
 
 # Check if the project directory contains a main.tf file (required for OpenTofu)
 if [ ! -f "${project_dir}/main.tf" ]; then
@@ -118,7 +120,8 @@ if [ ! -f "${project_dir}/main.tf" ]; then
   "backend": {
     "s3_bucket": "${bucket}",
     "dynamodb_table": "${dbtable}",
-    "kms_key_id": "${kms_key}"
+    "kms_key_id": "${kms_key}",
+    "kms_key_alias": "${kms_alias}"
   }
 }
 EOF

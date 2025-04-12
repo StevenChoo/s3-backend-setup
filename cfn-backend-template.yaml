@@ -20,7 +20,7 @@ Parameters:
 
 Conditions:
   # Only add Environment tag if an environment was specified
-  HasEnvironment: !Not [!Equals [!Ref EnvironmentName, ""]]
+  HasEnvironment: !Not [ !Equals [ !Ref EnvironmentName, "" ] ]
 
 Resources:
   # KMS Key for encryption
@@ -33,7 +33,7 @@ Resources:
     Type: AWS::KMS::Key
     Properties:
       # Description of the KMS key's purpose
-      Description: AWS KMS Key to encrypt the OpenTofu backend Amazon S3 bucket
+      Description: !Sub "AWS KMS Key to encrypt the OpenTofu backend for ${AWS::StackName}"
       # Enable the KMS key
       Enabled: True
       # Disable automatic key rotation for this key
@@ -41,7 +41,7 @@ Resources:
       # Define the key access policy
       KeyPolicy:
         Version: 2012-10-17
-        Id: key-s3-bucket-opentofu-backend
+        Id: key-s3-bucket-opentofu-s3-backend
         Statement:
           # Allow limited KMS access to the AWS account root user (least privilege)
           - Sid: Enable Root User Permissions
@@ -88,9 +88,9 @@ Resources:
       # Apply tags to the KMS key
       Tags:
         - Key: Project
-          Value: !Ref ProjectName
+          Value: !Ref AWS::StackName
         - Key: UsedBy
-          Value: OpenTofy
+          Value: OpenTofu
         - Key: UsedFor
           Value: OpenTofu_s3_backend
         - !If
@@ -150,9 +150,9 @@ Resources:
       # Apply tags to the bucket
       Tags:
         - Key: Project
-          Value: !Ref ProjectName
+          Value: !Ref AWS::StackName
         - Key: UsedBy
-          Value: OpenTofy
+          Value: OpenTofu
         - Key: UsedFor
           Value: OpenTofu_s3_backend
         - !If
@@ -203,10 +203,10 @@ Resources:
       # Configure server-side encryption using the same KMS key for consistent encryption
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-        - ServerSideEncryptionByDefault:
-            SSEAlgorithm: 'aws:kms'
-            KMSMasterKeyID: !GetAtt rKMSOpenTofuBackendKey.KeyId
-          BucketKeyEnabled: true
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt rKMSOpenTofuBackendKey.KeyId
+            BucketKeyEnabled: true
       # Set explicit object ownership to prevent ACL-based access
       OwnershipControls:
         Rules:
@@ -237,9 +237,9 @@ Resources:
       # Apply tags to the logs bucket
       Tags:
         - Key: Project
-          Value: !Ref ProjectName
+          Value: !Ref AWS::StackName
         - Key: UsedBy
-          Value: OpenTofy
+          Value: OpenTofu
         - Key: UsedFor
           Value: OpenTofu_s3_backend
         - !If
@@ -286,7 +286,7 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       # Set the table name
-      TableName: !If [HasEnvironment, !Sub "opentofu-lock-${ProjectName}-${EnvironmentName}", !Sub "opentofu-lock-${ProjectName}"]
+      TableName: !If [ HasEnvironment, !Sub "opentofu-lock-${AWS::StackName}-${EnvironmentName}", !Sub "opentofu-lock-${AWS::StackName}" ]
       # Use on-demand pricing for cost efficiency with infrequent usage
       BillingMode: PAY_PER_REQUEST
       # Define the schema (as required by Terraform/OpenTofu for state locking)
@@ -307,15 +307,25 @@ Resources:
       # Apply tags to the DynamoDB table
       Tags:
         - Key: Project
-          Value: !Ref ProjectName
+          Value: !Ref AWS::StackName
         - Key: UsedBy
-          Value: OpenTofy
+          Value: OpenTofu
         - Key: UsedFor
           Value: OpenTofu_s3_backend
         - !If
           - HasEnvironment
           - { Key: Environment, Value: !Ref EnvironmentName }
           - !Ref AWS::NoValue
+
+  # KMS key alias for easier identification and management
+  rKMSOpenTofuBackendKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !If
+        - HasEnvironment
+        - !Sub "alias/opentofu-backend-${AWS::StackName}-${EnvironmentName}"
+        - !Sub "alias/opentofu-backend-${AWS::StackName}"
+      TargetKeyId: !Ref rKMSOpenTofuBackendKey
 
 # Outputs to be used by the bootstrap script and OpenTofu
 Outputs:
@@ -336,3 +346,9 @@ Outputs:
     Value: !Ref rKMSOpenTofuBackendKey
     Export:
       Name: 'OpenTofuKMSKeyID'
+
+  KMSKeyAlias:
+    Description: Alias of the KMS key used for encryption
+    Value: !Ref rKMSOpenTofuBackendKeyAlias
+    Export:
+      Name: 'OpenTofuKMSKeyAlias'

@@ -166,9 +166,8 @@ aws cloudformation delete-stack \
   --region YOUR_REGION
 
 # 4. Since resources have DeletionPolicy: Retain, you need to manually delete:
-# - The S3 buckets (both state and access logs)
-# - The KMS key
-# - The DynamoDB table
+- The S3 buckets (both state and access logs)
+- The KMS key
 
 # You can find these resource names in your backend-info.json file
 ```
