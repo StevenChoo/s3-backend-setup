@@ -28,6 +28,7 @@ fi
 
 # Default values
 DEFAULT_REGION="eu-west-1"
+DEFAULT_PROFILE="default"
 
 # Ask for project name
 read -p "Enter project name (required): " PROJECT_NAME
@@ -43,6 +44,10 @@ read -p "Enter environment name (dev/prod/etc., optional): " ENV_NAME
 read -p "Enter AWS region (default: $DEFAULT_REGION): " REGION
 REGION=${REGION:-$DEFAULT_REGION}
 
+# Ask for AWS profile (optional)
+read -p "Enter AWS profile (default: $DEFAULT_PROFILE): " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-$DEFAULT_PROFILE}
+
 # Set stack name based on project and environment
 STACK_NAME="opentofu-backend-${PROJECT_NAME}"
 if [ -n "$ENV_NAME" ]; then
@@ -57,9 +62,12 @@ then
 fi
 
 # Check for valid AWS credentials
-if ! aws sts get-caller-identity &> /dev/null
-then
-    echo "Error: Invalid AWS credentials. Please configure your AWS credentials and try again."
+error_output=$(aws sts get-caller-identity --profile "$AWS_PROFILE" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "Error: Invalid AWS credentials for profile '$AWS_PROFILE'"
+    echo "AWS Error: $error_output"
+    echo "Please configure your AWS credentials and try again."
+    echo "If you are using SSO for AWS credentials make sure to refresh your token by calling: aws sso login"
     exit 1
 fi
 
@@ -76,20 +84,22 @@ if [ -n "$ENV_NAME" ]; then
   echo "Environment: ${ENV_NAME}"
 fi
 echo "Region: ${REGION}"
+echo "AWS Profile: ${AWS_PROFILE}"
 
 # Deploy the CloudFormation stack with our parameters
 aws cloudformation deploy \
   --template-file "${source_dir}/cfn-backend-template.yaml" \
   --stack-name "$STACK_NAME" \
   --region "${REGION}" \
+  --profile "$AWS_PROFILE" \
   --parameter-overrides ${PARAMETERS} \
   --capabilities CAPABILITY_IAM
 
 # Get the outputs from CloudFormation to use in our OpenTofu configuration
 echo "--- Get S3 bucket & DynamoDB table name for OpenTofu backend ---"
-bucket=$(aws cloudformation describe-stacks --region "${REGION}" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendBucketName'].OutputValue" --output text)
-dbtable=$(aws cloudformation describe-stacks --region "${REGION}" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendDynamoDBName'].OutputValue" --output text)
-kms_key=$(aws cloudformation describe-stacks --region "${REGION}" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='KMSKeyID'].OutputValue" --output text)
+bucket=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendBucketName'].OutputValue" --output text)
+dbtable=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='OpenTofuBackendDynamoDBName'].OutputValue" --output text)
+kms_key=$(aws cloudformation describe-stacks --region "${REGION}" --profile "$AWS_PROFILE" --query "Stacks[?StackName=='$STACK_NAME'][].Outputs[?OutputKey=='KMSKeyID'].OutputValue" --output text)
 
 echo "S3 Bucket: $bucket"
 echo "DynamoDB table: $dbtable"
@@ -104,6 +114,7 @@ if [ ! -f "${project_dir}/main.tf" ]; then
   "project": "${PROJECT_NAME}",
   "environment": "${ENV_NAME}",
   "region": "${REGION}",
+  "profile": "${AWS_PROFILE}",
   "backend": {
     "s3_bucket": "${bucket}",
     "dynamodb_table": "${dbtable}",
