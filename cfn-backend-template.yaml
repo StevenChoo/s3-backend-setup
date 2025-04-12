@@ -43,20 +43,48 @@ Resources:
         Version: 2012-10-17
         Id: key-s3-bucket-opentofu-backend
         Statement:
-          # Allow full KMS access to the AWS account root user
-          - Sid: Enable IAM User Permissions
+          # Allow limited KMS access to the AWS account root user (least privilege)
+          - Sid: Enable Root User Permissions
             Effect: Allow
             Principal:
               AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
-            Action: 'kms:*'
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:TagResource'
+              - 'kms:UntagResource'
+              - 'kms:CancelKeyDeletion'
             Resource: '*'
-          # Prevent key deletion for security
+          # Allow use of the key for the specific services that need it
+          - Sid: Allow Use Of Key For Services
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:DescribeKey'
+            Resource: '*'
+          # Prevent key deletion for security with explicit condition
           - Sid: DeleteProtection
             Principal: "*"
             Effect: Deny
             Action:
               - kms:ScheduleKeyDeletion
             Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:PrincipalType: "Service"
       # Apply tags to the KMS key
       Tags:
         - Key: Project
@@ -93,6 +121,14 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      # Add MFA Delete protection to prevent accidental deletion
+      VersioningConfiguration:
+        Status: Enabled
+        MfaDelete: Enabled
+      # Set explicit object ownership to prevent ACL-based access
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       # Configure lifecycle rules to optimize storage costs
       LifecycleConfiguration:
         Rules:
@@ -106,9 +142,7 @@ Resources:
             NoncurrentVersionTransitions:
               - TransitionInDays: 1
                 StorageClass: GLACIER
-      # Enable versioning to keep history of all state files
-      VersioningConfiguration:
-        Status: Enabled
+      # This VersioningConfiguration is now defined earlier with MFA Delete enabled
       # Enable access logging for audit purposes
       LoggingConfiguration:
         DestinationBucketName: !Ref rAccessLogsBucket
@@ -166,11 +200,17 @@ Resources:
     Properties:
       # Name the access logs bucket
       BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-access-logs
-      # Configure server-side encryption (using AES256 instead of KMS for cost efficiency)
+      # Configure server-side encryption using the same KMS key for consistent encryption
       BucketEncryption:
         ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
-            SSEAlgorithm: AES256
+            SSEAlgorithm: 'aws:kms'
+            KMSMasterKeyID: !GetAtt rKMSOpenTofuBackendKey.KeyId
+          BucketKeyEnabled: true
+      # Set explicit object ownership to prevent ACL-based access
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       # Block all public access for security
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -190,9 +230,10 @@ Resources:
             NoncurrentVersionTransitions:
               - TransitionInDays: 1
                 StorageClass: GLACIER
-      # Enable versioning for audit purposes
+      # Enable versioning for audit purposes with MFA delete protection
       VersioningConfiguration:
         Status: Enabled
+        MfaDelete: Enabled
       # Apply tags to the logs bucket
       Tags:
         - Key: Project
