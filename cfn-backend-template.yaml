@@ -198,7 +198,7 @@ Resources:
             reason: "This is the bucket to store the access logs"
     Properties:
       # Name the access logs bucket
-      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-access-logs
+      BucketName: !Sub ${AWS::StackName}-access-logs
       # Configure server-side encryption using the same KMS key for consistent encryption
       BucketEncryption:
         ServerSideEncryptionConfiguration:
