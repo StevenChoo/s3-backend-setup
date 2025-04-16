@@ -6,6 +6,7 @@ The initial setup and configuration is based on: https://github.com/aws-samples/
 
 **Improvements are:**
 * Updated script to make be reusable by asking for a project name and environment
+* Added option to specify which AWS CLI profile to use
 * Added extra default tags to the AWS resources
 
 ## Architecture Overview
@@ -39,6 +40,7 @@ You will be prompted for:
 1. Project name (required)
 2. Environment name (optional, e.g., dev, prod)
 3. AWS region (defaults to eu-west-1)
+4. AWS profile (defaults to "default")
 
 The script performs the following actions:
 
@@ -56,10 +58,12 @@ After running the script, a `backend-info.json` file will be created with all co
   "project": "your-project-name",
   "environment": "dev",
   "region": "eu-west-1",
+  "profile": "default",
   "backend": {
     "s3_bucket": "opentofu-backend-your-project-name-dev-123456789012",
     "dynamodb_table": "opentofu-lock-your-project-name-dev",
-    "kms_key_id": "abcd1234-ef56-gh78-ij90-klmnopqrstuv"
+    "kms_key_id": "abcd1234-ef56-gh78-ij90-klmnopqrstuv",
+    "kms_key_alias": "alias/opentofu-backend-your-project-name-dev"
   }
 }
 ```
@@ -93,7 +97,8 @@ terraform {
 }
 
 provider "aws" {
-  region = "YOUR_REGION"
+  region  = "YOUR_REGION"
+  profile = "YOUR_AWS_PROFILE"  # Optional: Include if using non-default AWS profile
 }
 
 # Your OpenTofu resources here
@@ -102,6 +107,7 @@ provider "aws" {
 Notes:
 - The `key` parameter is the path within the S3 bucket where the state file will be stored
 - Typically use something like `env/project-name.tfstate` or `terraform.tfstate`
+- If using a specific AWS profile, add the `profile` parameter to the provider block
 
 ### 2. Initialize with the Backend Configuration
 
@@ -113,7 +119,8 @@ tofu init \
   -backend-config="region=YOUR_REGION" \
   -backend-config="dynamodb_table=YOUR_DYNAMODB_TABLE_NAME" \
   -backend-config="key=path/to/your/state.tfstate" \
-  -backend-config="encrypt=true"
+  -backend-config="encrypt=true" \
+  -backend-config="profile=YOUR_AWS_PROFILE"
 ```
 
 ### 3. Verify Backend Configuration
@@ -155,15 +162,16 @@ To safely destroy the backend stack:
 ```shell
 # 1. First, make sure you have migrated any important state files from the S3 bucket
 # You can download them with:
-aws s3 cp s3://YOUR_S3_BUCKET_NAME/path/to/your/state.tfstate ./local-backup.tfstate
+aws s3 cp s3://YOUR_S3_BUCKET_NAME/path/to/your/state.tfstate ./local-backup.tfstate --profile YOUR_AWS_PROFILE
 
 # 2. Empty the S3 bucket (required before deletion):
-aws s3 rm s3://YOUR_S3_BUCKET_NAME --recursive
+aws s3 rm s3://YOUR_S3_BUCKET_NAME --recursive --profile YOUR_AWS_PROFILE
 
 # 3. Delete the CloudFormation stack (replace values with your own):
 aws cloudformation delete-stack \
   --stack-name opentofu-backend-YOUR_PROJECT_NAME-YOUR_ENV \
-  --region YOUR_REGION
+  --region YOUR_REGION \
+  --profile YOUR_AWS_PROFILE
 
 # 4. Since resources have DeletionPolicy: Retain, you need to manually delete:
 - The S3 buckets (both state and access logs)
@@ -176,3 +184,4 @@ aws cloudformation delete-stack \
 - Ensure you have backups of your state files before destroying the backend
 - Consider the impact on any projects using this backend
 - The CloudFormation stack deletion will fail if the S3 buckets are not empty
+- Use the same AWS profile you used during setup when destroying resources
